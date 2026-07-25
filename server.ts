@@ -418,15 +418,15 @@ ${botConfig.priceListPdfUrl}`;
   // API ENDPOINTS
   // -------------------------------------------------------------
 
-  // 1. Meta Webhook Verification (GET)
+  // 1. Meta Webhook Verification (GET) - FIXED VERSION
   const handleWebhookVerification = (req: any, res: any) => {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
 
-    console.log(`🔍 Meta Webhook Verification request received. Mode: ${mode}, Token: ${token}`);
+    console.log(`🔍 Meta Webhook Verification request received. Mode: ${mode}, Token: ${token}, Challenge: ${challenge}`);
 
-    if (mode && token) {
+    if (mode && token && challenge) {
       const isTokenValid =
         token === botConfig.metaVerifyToken ||
         token === 'grandcarbon_verify_123' ||
@@ -435,13 +435,15 @@ ${botConfig.priceListPdfUrl}`;
 
       if (mode === 'subscribe' && isTokenValid) {
         console.log('✅ Meta Webhook Verification SUCCESSful!');
-        return res.status(200).send(String(challenge || 'OK'));
+        // CRITICAL: Return challenge as plain string, no wrapping
+        return res.status(200).type('text/plain').send(challenge);
       } else {
-        console.error('❌ Verify token mismatch!');
+        console.error(`❌ Verify token mismatch! Expected: ${botConfig.metaVerifyToken}, Got: ${token}`);
         return res.status(403).send('Forbidden - Verify token mismatch');
       }
     }
-    res.status(400).send('Missing hub parameters');
+    console.error('Missing hub parameters', { mode, token, challenge });
+    return res.status(400).send('Missing hub parameters');
   };
 
   app.get('/api/whatsapp/webhook', handleWebhookVerification);
@@ -474,6 +476,44 @@ ${botConfig.priceListPdfUrl}`;
           console.log(`💬 Incoming WhatsApp message from ${fromPhone}: "${incomingText}"`);
 
           // Process through chatbot engine
+          await processIncomingMessage(fromPhone, incomingText);
+        }
+
+        return res.status(200).send('EVENT_RECEIVED');
+      } else {
+        return res.sendStatus(404);
+      }
+    } catch (err: any) {
+      console.error('Error handling webhook event:', err);
+      return res.status(500).send('Internal Server Error');
+    }
+  });
+
+  // Also handle POST on /api/webhook
+  app.post('/api/webhook', async (req, res) => {
+    try {
+      const body = req.body;
+
+      if (body.object === 'whatsapp_business_account') {
+        const entry = body.entry?.[0];
+        const changes = entry?.changes?.[0];
+        const value = changes?.value;
+        const messages = value?.messages;
+
+        if (messages && messages.length > 0) {
+          const msg = messages[0];
+          const fromPhone = '+' + msg.from;
+          let incomingText = '';
+
+          if (msg.type === 'text') {
+            incomingText = msg.text?.body || '';
+          } else if (msg.type === 'interactive') {
+            incomingText = msg.interactive?.button_reply?.title || msg.interactive?.list_reply?.title || '';
+          } else if (msg.type === 'button') {
+            incomingText = msg.button?.text || '';
+          }
+
+          console.log(`💬 Incoming WhatsApp message from ${fromPhone}: "${incomingText}"`);
           await processIncomingMessage(fromPhone, incomingText);
         }
 
